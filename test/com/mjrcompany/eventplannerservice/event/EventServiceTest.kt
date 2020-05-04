@@ -27,7 +27,7 @@ class EventServiceTest : RootTestDefinition() {
             .toOption()
             .getOrElse { throw RuntimeException("Error creating event") }
 
-        val event = TestDatabaseHelper.queryEventWithoutTasks(id)
+        val event = TestDatabaseHelper.queryMiniEvent(id)
 
         assertEquals(subjectId, event.subject.id)
         assertEquals(subjectId, event.subject.id)

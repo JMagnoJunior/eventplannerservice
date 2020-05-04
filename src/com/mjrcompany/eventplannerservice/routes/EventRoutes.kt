@@ -1,9 +1,7 @@
 package com.mjrcompany.eventplannerservice.com.mjrcompany.eventplannerservice.routes
 
 
-import arrow.core.flatMap
-import com.mjrcompany.eventplannerservice.com.mjrcompany.eventplannerservice.authorization.AuthorizationService
-import com.mjrcompany.eventplannerservice.com.mjrcompany.eventplannerservice.authorization.withFriendInEventRequestPermission
+import com.mjrcompany.eventplannerservice.UserEmailAttributeKey
 import com.mjrcompany.eventplannerservice.com.mjrcompany.eventplannerservice.authorization.withHostRequestPermission
 import com.mjrcompany.eventplannerservice.com.mjrcompany.eventplannerservice.core.EventOrderBy
 import com.mjrcompany.eventplannerservice.com.mjrcompany.eventplannerservice.core.TaskOrderBy
@@ -14,7 +12,9 @@ import com.mjrcompany.eventplannerservice.domain.EventSubscriberWritable
 import com.mjrcompany.eventplannerservice.domain.TaskOwnerWritable
 import com.mjrcompany.eventplannerservice.event.EventService
 import com.mjrcompany.eventplannerservice.tasks.TaskService
-import io.ktor.application.application
+import com.mjrcompany.eventplannerservice.withFriendInEventRequestPermission
+import com.mjrcompany.eventplannerservice.withHostRequestPermission
+import com.mjrcompany.eventplannerservice.withIdToken
 import io.ktor.application.call
 import io.ktor.auth.authenticate
 import io.ktor.http.HttpStatusCode
@@ -54,39 +54,34 @@ fun Route.events() {
         // Create event does not follow the patter for a regular CRUD resource,
         // because of that the POST and PUT method are not provided by CRUD Api
         authenticate {
-            post("/") {
-                val event = call.receive<EventDTO>()
-                val headers = call.request.headers
-                val idToken = headers["X-Id-Token"] ?: " "
+            withIdToken {
+                post("/") {
+                    val event = call.receive<EventDTO>()
+                    val userEmail = call.attributes.get(UserEmailAttributeKey)
 
-
-                val (status, body) = withValidRequest(event) {
-                    HttpStatusCode.Created to AuthorizationService(application).getIdTokenPayload(idToken)
-                        .flatMap {
-                            EventService.createEvent(
-                                it.email,
-                                event
-                            )
-                        }
+                    val (status, body) = withValidRequest(event) {
+                        HttpStatusCode.Created to
+                                EventService.createEvent(
+                                    userEmail,
+                                    event
+                                )
+                    }
+                    call.respond(status, body)
                 }
-                call.respond(status, body)
-            }
 
-            put("/{id}") {
-                val dto = call.receive<EventDTO>()
-                val id = call.getParamIdAsUUID()
-                val headers = call.request.headers
-                val idToken = headers["X-Id-Token"] ?: " "
-                val (status, body) = withHostRequestPermission(application, id, idToken) {
-                    withValidRequest(dto) { eventDTO ->
-                        HttpStatusCode.Accepted to AuthorizationService(application)
-                            .getIdTokenPayload(idToken)
-                            .flatMap { idTokenPayload ->
-                                EventService.updateEvent(idTokenPayload.email, id, eventDTO)
-                            }
+                withHostRequestPermission {
+                    put("/{id}") {
+                        val dto = call.receive<EventDTO>()
+                        val id = call.getParamIdAsUUID()
+                        val userEmail = call.attributes.get(UserEmailAttributeKey)
+
+                        val (status, body) = withValidRequest(dto) { eventDTO ->
+                            HttpStatusCode.Accepted to EventService.updateEvent(userEmail, id, eventDTO)
+                        }
+
+                        call.respond(status, body)
                     }
                 }
-                call.respond(status, body)
             }
 
             post("{id}/subscribe") {
@@ -98,47 +93,33 @@ fun Route.events() {
                 call.respond(status, body)
             }
 
-            post("{id}/accept-guest") {
-                val dto = call.receive<AcceptGuestInEventWritable>()
-                val eventId = call.getParamIdAsUUID()
-                val headers = call.request.headers
-                val idToken = headers["X-Id-Token"] ?: ""
+            withHostRequestPermission {
+                post("{id}/accept-guest") {
+                    val dto = call.receive<AcceptGuestInEventWritable>()
+                    val eventId = call.getParamIdAsUUID()
 
-                if (idToken.isBlank()) {
-                    call.respond("provide an id-token")
-                }
-
-                val (status, body) =
-                    withHostRequestPermission(this.application, eventId, idToken) {
-                        withValidRequest(dto) {
-                            HttpStatusCode.Accepted to EventService.acceptGuest(eventId, it)
-                        }
+                    val (status, body) = withValidRequest(dto) {
+                        HttpStatusCode.Accepted to EventService.acceptGuest(eventId, it)
                     }
-                call.respond(status, body)
+                    call.respond(status, body)
+                }
             }
         }
 
         // sub resources: /tasks
-        route("{id}/tasks") {
-            authenticate {
-                post("/{subId}/accept") {
-                    val dto = call.receive<TaskOwnerWritable>()
-                    val eventgId = call.getParamIdAsUUID()
-                    val taskId = call.getParamSubIdAsInt()
-                    val headers = call.request.headers
-                    val idToken = headers["X-Id-Token"] ?: " "
+        withFriendInEventRequestPermission {
+            route("{id}/tasks") {
+                authenticate {
+                    post("/{subId}/accept") {
+                        val dto = call.receive<TaskOwnerWritable>()
+                        val eventId = call.getParamIdAsUUID()
+                        val taskId = call.getParamSubIdAsInt()
 
-                    if (idToken.isBlank()) {
-                        call.respond("provide an id-token")
-                    }
-
-                    val (status, body) = withFriendInEventRequestPermission(this.application, eventgId, idToken) {
-                        withValidRequest(dto) {
-                            HttpStatusCode.Accepted to TaskService.acceptTask(taskId, eventgId, it)
+                        val (status, body) = withValidRequest(dto) {
+                            HttpStatusCode.Accepted to TaskService.acceptTask(taskId, eventId, it)
                         }
+                        call.respond(status, body)
                     }
-                    call.respond(status, body)
-
                 }
             }
         }

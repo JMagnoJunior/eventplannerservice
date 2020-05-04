@@ -1,5 +1,6 @@
 package com.mjrcompany.eventplannerservice
 
+import arrow.core.Option
 import arrow.core.firstOrNone
 import arrow.core.getOrElse
 import com.mjrcompany.eventplannerservice.database.*
@@ -68,7 +69,7 @@ object TestDatabaseHelper {
         }
     }
 
-    fun queryEventWithoutTasks(id: UUID): Event {
+    fun queryMiniEvent(id: UUID): Event {
         return transaction {
             Events
                 .join(Users, JoinType.INNER, additionalConstraint = { Events.host eq Users.id })
@@ -76,6 +77,27 @@ object TestDatabaseHelper {
                 .select { Events.id eq id }
                 .map { DataMapper.mapToEvent(it, emptyList(), emptyList()) }
                 .first()
+        }
+    }
+
+    fun queryEvent(id: UUID): Option<Event> {
+        return transaction {
+            Events
+                .join(Users, JoinType.INNER, additionalConstraint = { Events.host eq Users.id })
+                .join(Subjects, JoinType.INNER, additionalConstraint = { Events.subject eq Subjects.id })
+                .select { Events.id eq id }
+                .firstOrNone()
+                .map {
+                    val tasks = Tasks.select { Tasks.event eq id }
+                        .map { DataMapper.mapToTask(it) }
+
+                    val guests = UsersInEvents
+                        .join(Users, JoinType.INNER, additionalConstraint = { UsersInEvents.user eq Users.id })
+                        .select { UsersInEvents.event eq id }
+                        .map { DataMapper.mapToGuest(it) }
+                    DataMapper.mapToEvent(it, tasks, guests)
+                }
+
         }
     }
 
@@ -174,6 +196,17 @@ object TestDatabaseHelper {
                 .getOrElse { throw RuntimeException("Error querying subjects") }
         }
         return subject
+    }
+
+    fun addGuestIntoEvent(eventId: UUID, guestId: UUID) {
+        transaction {
+            UsersInEvents.insert {
+                it[event] = eventId
+                it[user] = guestId
+                it[status] = UserInEventStatus.Pending
+            }
+        }
+
     }
 
 }

@@ -1,19 +1,27 @@
 package com.mjrcompany.eventplannerservice.routes
 
+import arrow.core.getOrElse
 import com.mjrcompany.eventplannerservice.*
 import com.mjrcompany.eventplannerservice.com.mjrcompany.eventplannerservice.domain.EventDTO
+import com.mjrcompany.eventplannerservice.database.UsersInEvents
+import com.mjrcompany.eventplannerservice.domain.AcceptGuestInEventWritable
 import com.mjrcompany.eventplannerservice.domain.Event
 import com.mjrcompany.eventplannerservice.domain.EventWritable
+import com.mjrcompany.eventplannerservice.domain.UserInEventStatus
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.handleRequest
 import io.ktor.server.testing.setBody
 import io.ktor.util.KtorExperimentalAPI
+import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.transactions.transaction
 import org.junit.Test
+import java.lang.RuntimeException
 import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.util.*
 import kotlin.test.assertEquals
+import kotlin.test.fail
 
 
 @KtorExperimentalAPI
@@ -60,7 +68,7 @@ class EventRoutesTest : RootTestDefinition() {
                 )
 
                 val eventCreated =
-                    TestDatabaseHelper.queryEventWithoutTasks(id)
+                    TestDatabaseHelper.queryMiniEvent(id)
 
                 assertEquals(eventTitle, eventCreated.title)
                 assertEquals(eventHost, eventCreated.host.email)
@@ -137,7 +145,7 @@ class EventRoutesTest : RootTestDefinition() {
         }
 
         val eventUpdated =
-            TestDatabaseHelper.queryEventWithoutTasks(id)
+            TestDatabaseHelper.queryMiniEvent(id)
 
         assertEquals(modifiedEvent.title, eventUpdated.title)
         assertEquals(modifiedEvent.subject, eventUpdated.subject.id)
@@ -146,6 +154,31 @@ class EventRoutesTest : RootTestDefinition() {
         assertEquals(modifiedEvent.maxNumberGuest, eventUpdated.maxNumberGuest)
         assertEquals(modifiedEvent.totalCost, eventUpdated.totalCost)
         assertEquals(modifiedEvent.additionalInfo, eventUpdated.additionalInfo)
+    }
+
+    @Test
+    fun `it should add user as a guest when user accept to be a guest of the event`() {
+
+        val (eventId, _) = getEventWritableForTest()
+        val guestId = TestDatabaseHelper.generateUser(UUID.randomUUID())
+        val guest = TestDatabaseHelper.queryUserById(guestId)
+        TestDatabaseHelper.addGuestIntoEvent(eventId, guestId)
+
+        val acceptGuestInEvent = AcceptGuestInEventWritable(guest.id, UserInEventStatus.Accept)
+        withCustomTestApplication({ module(testing = true) }) {
+            handleRequest(HttpMethod.Post, "/events/$eventId/accept-guest") {
+                addHeader("Content-Type", "application/json")
+                addAuthenticationHeader(this)
+                buildXIdToken(this, guest.email, guest.name)
+                setBody(gson.toJson(acceptGuestInEvent))
+            }.apply {
+                assertEquals(HttpStatusCode.Accepted, response.status())
+            }
+        }
+
+        val eventUpdated = TestDatabaseHelper.queryEvent(eventId).getOrElse { fail("it should get the event") }
+        assertEquals(eventUpdated.guestInEvents[0].status, UserInEventStatus.Accept)
+
     }
 
     private fun getEventWritableForTest(): Pair<UUID, EventWritable> {
